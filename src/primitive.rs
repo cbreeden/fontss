@@ -1,10 +1,77 @@
-use byteorder::{ReadBytesExt, BE};
+use byteorder::{ByteOrder, BE};
+use error::FontParseError;
 use std::fmt;
 
-pub trait Primitive {
+pub trait Primitive: Sized {
     const SIZE: usize;
-    fn parse(buffer: &[u8]) -> Result<Self>;
+    fn parse(buffer: &[u8]) -> Result<Self, FontParseError>;
 }
+
+macro_rules! impl_primitive {
+    ($($func:path => $ty:ty, $size:expr),*) => (
+        $(
+        impl Primitive for $ty {
+            const SIZE: usize = $size;
+            fn parse(buffer: &[u8]) -> Result<Self, FontParseError> {
+                if buffer.len() < Self::SIZE {
+                    return Err(FontParseError::UnexpectedEof);
+                } else {
+                    Ok(From::from($func(buffer)))
+                }
+            }
+        }
+        )*
+    )
+}
+
+macro_rules! impl_from {
+    ($($from:ty => $to:tt),*) => (
+        $(
+        impl From<$from> for $to {
+            fn from(f: $from) -> $to {
+                $to(f)
+            }
+        }
+        )*
+    )
+}
+
+fn read_u8(buf: &[u8]) -> u8 {
+    buf[0]
+}
+
+fn read_i8(buf: &[u8]) -> i8 {
+    buf[0] as i8
+}
+
+impl_from!(
+    u32 => U24,
+    i32 => Fixed,
+    i16 => FWord,
+    u16 => UFWord,
+    i16 => F2Dot14,
+    u64 => LongDateTime,
+    u16 => Offset16,
+    u32 => Offset32
+);
+
+impl_primitive!(
+    read_u8      => u8,           1,
+    read_i8      => i8,           1,
+    BE::read_u16 => u16,          2,
+    BE::read_i16 => i16,          2,
+    BE::read_u32 => u32,          4,
+    BE::read_i32 => i32,          4,
+    
+    BE::read_u24 => U24,          3,
+    BE::read_i32 => Fixed,        4,
+    BE::read_i16 => FWord,        2,
+    BE::read_u16 => UFWord,       2,
+    BE::read_i16 => F2Dot14,      2,
+    BE::read_u64 => LongDateTime, 8,
+    BE::read_u16 => Offset16,     2,
+    BE::read_u32 => Offset32,     4
+);
 
 // Unsigned 24-bit integer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +120,25 @@ impl fmt::Debug for Tag {
         use std::str;
         // Print the ASCII name if the contents are valid ASCII.
         // Otherwise, print hexidecimal digits.
-        if self.0.iter().all(|&c| c >= 32 && c <= 128) {
+        if self.0.iter().all(|&c| c >= 32 && c <= 126) {
             let s = str::from_utf8(&self.0[..]).unwrap();
             f.debug_tuple("Tag").field(&s).finish()
         } else {
             write!(f, "Tag(0x{:08X})", self.as_u32())
+        }
+    }
+}
+
+impl Primitive for Tag {
+    const SIZE: usize = 4;
+    fn parse(mut buf: &[u8]) -> Result<Self, FontParseError> {
+        if buf.len() < Self::SIZE {
+            return Err(FontParseError::UnexpectedEof);
+        } else {
+            use std::io::Read;
+            let mut tag = [0; 4];
+            let _ = buf.read_exact(&mut tag);
+            Ok(Tag(tag))
         }
     }
 }
