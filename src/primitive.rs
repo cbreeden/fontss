@@ -4,7 +4,7 @@ use std::fmt;
 
 pub trait Primitive: Sized {
     const SIZE: usize;
-    fn parse(buffer: &[u8]) -> Result<Self, FontParseError>;
+    fn parse(buffer: &[u8]) -> Result<(Self, &[u8]), FontParseError>;
 }
 
 macro_rules! impl_primitive {
@@ -12,11 +12,12 @@ macro_rules! impl_primitive {
         $(
         impl Primitive for $ty {
             const SIZE: usize = $size;
-            fn parse(buffer: &[u8]) -> Result<Self, FontParseError> {
+            fn parse(buffer: &[u8]) -> Result<(Self, &[u8]), FontParseError> {
                 if buffer.len() < Self::SIZE {
                     return Err(FontParseError::UnexpectedEof);
                 } else {
-                    Ok(From::from($func(buffer)))
+                    let result = From::from($func(buffer));
+                    Ok( (result, &buffer[Self::SIZE..]) )
                 }
             }
         }
@@ -62,7 +63,7 @@ impl_primitive!(
     BE::read_i16 => i16,          2,
     BE::read_u32 => u32,          4,
     BE::read_i32 => i32,          4,
-    
+
     BE::read_u24 => U24,          3,
     BE::read_i32 => Fixed,        4,
     BE::read_i16 => FWord,        2,
@@ -75,35 +76,47 @@ impl_primitive!(
 
 // Unsigned 24-bit integer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct U24(u32);
+pub struct U24(u32);
 
 // Signed 16.16 fixed-point number
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Fixed(i32);
+pub struct Fixed(i32);
 
 // Signed 16-bit integer describing quantity in font design units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FWord(i16);
+pub struct FWord(i16);
 
 // Unsigned 16-bit integer describing quantity in font design units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UFWord(u16);
+pub struct UFWord(u16);
 
 // Signed 2.14 fixed-point number
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct F2Dot14(i16);
+pub struct F2Dot14(i16);
 
 // Date represented in number of seconds since 12:00 midnight, January 1, 1904.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LongDateTime(u64);
+pub struct LongDateTime(u64);
 
 // Short offset to a table, same as uint16, NULL offset = 0x0000
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Offset16(u16);
+pub struct Offset16(u16);
+
+impl Offset16 {
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
 
 // Long offset to a table, same as uint32, NULL offset = 0x00000000
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Offset32(u32);
+pub struct Offset32(u32);
+
+impl Offset32 {
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub [u8; 4]);
@@ -131,14 +144,14 @@ impl fmt::Debug for Tag {
 
 impl Primitive for Tag {
     const SIZE: usize = 4;
-    fn parse(mut buf: &[u8]) -> Result<Self, FontParseError> {
+    fn parse(mut buf: &[u8]) -> Result<(Self, &[u8]), FontParseError> {
         if buf.len() < Self::SIZE {
             return Err(FontParseError::UnexpectedEof);
         } else {
             use std::io::Read;
             let mut tag = [0; 4];
             let _ = buf.read_exact(&mut tag);
-            Ok(Tag(tag))
+            Ok( (Tag(tag), &buf[Self::SIZE..]) )
         }
     }
 }
